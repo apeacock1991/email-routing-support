@@ -1,65 +1,61 @@
-import { DurableObject } from "cloudflare:workers";
+import { SupportCase } from "./support_case";
+import PostalMime from 'postal-mime';
 
-/**
- * Welcome to Cloudflare Workers! This is your first Durable Objects application.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your Durable Object in action
- * - Run `npm run deploy` to publish your application
- *
- * Bind resources to your worker in `wrangler.json`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/durable-objects
- */
+export { SupportCase };
 
-/** A Durable Object's behavior is defined in an exported Javascript class */
-export class MyDurableObject extends DurableObject<Env> {
-	/**
-	 * The constructor is invoked once upon creation of the Durable Object, i.e. the first call to
-	 * 	`DurableObjectStub::get` for a given identifier (no-op constructors can be omitted)
-	 *
-	 * @param ctx - The interface for interacting with Durable Object state
-	 * @param env - The interface to reference bindings declared in wrangler.json
-	 */
-	constructor(ctx: DurableObjectState, env: Env) {
-		super(ctx, env);
-	}
-
-	/**
-	 * The Durable Object exposes an RPC method sayHello which will be invoked when when a Durable
-	 *  Object instance receives a request from a Worker via the same method invocation on the stub
-	 *
-	 * @param name - The name provided to a Durable Object instance from a Worker
-	 * @returns The greeting to be sent back to the Worker
-	 */
-	async sayHello(name: string): Promise<string> {
-		return `Hello, ${name}!`;
-	}
+export type SerializableEmailMessage = {
+  from: string;
+  to: string;
+  messageId: string | null;
+  subject: string | null;
+  raw: string;
 }
 
 export default {
-	/**
-	 * This is the standard fetch handler for a Cloudflare Worker
-	 *
-	 * @param request - The request submitted to the Worker from the client
-	 * @param env - The interface to reference bindings declared in wrangler.json
-	 * @param ctx - The execution context of the Worker
-	 * @returns The response to be sent back to the client
-	 */
-	async fetch(request, env, ctx): Promise<Response> {
-		// We will create a `DurableObjectId` using the pathname from the Worker request
-		// This id refers to a unique instance of our 'MyDurableObject' class above
-		let id: DurableObjectId = env.MY_DURABLE_OBJECT.idFromName(new URL(request.url).pathname);
+  // Defined just to avoid random errors in logs - not used as part of the email worker
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    return new Response("Hello World");
+  },
+  async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
+    // Avoid handling larger emails
+    if (message.rawSize > 15000) {
+      message.setReject("Sorry, we can't handle emails larger than 15000 bytes.");
+      return;
+    }
 
-		// This stub creates a communication channel with the Durable Object instance
-		// The Durable Object constructor will be invoked upon the first call for a given id
-		let stub = env.MY_DURABLE_OBJECT.get(id);
+    // Limit the number of emails per email address
+    const { success } = await env.RATE_LIMITER.limit({ key: message.from })
 
-		// We call the `sayHello()` RPC method on the stub to invoke the method on the remote
-		// Durable Object instance
-		let greeting = await stub.sayHello("world");
+    if (!success) {
+      message.setReject("Sorry, you've sent too many emails.");
+      return;
+    }
 
-		return new Response(greeting);
-	},
+    // Extract who the email is addressed to
+    const addressee = message.to.split('@')[0];
+
+    // Parse the email contents, as messsage.row contains a ton of other stuff
+    const email = await PostalMime.parse(message.raw);
+
+    // We can't pass a ForwardableEmailMessage to a DurableObject, as it's not serializable, so create a serializable version
+    const serializableMessage: SerializableEmailMessage = {
+      from: message.from,
+      to: message.to,
+      messageId: message.headers.get("Message-ID"),
+      subject: email.subject || "",
+      raw: email.text || ""
+    };
+
+    // If the email is addressed to support, we need to create a new case id else the addressees is the case id
+    const caseId = addressee === "support" 
+      ? `case-${crypto.randomUUID()}`
+      : addressee;
+
+    // Get the DurableObject id and instance
+    const id = env.SUPPORT_CASE.idFromName(caseId);
+    let supportCase = env.SUPPORT_CASE.get(id);
+
+    // Call the durable object to handle the message, this is an RPC call
+    await supportCase.handleMessage(serializableMessage, caseId);
+  },
 } satisfies ExportedHandler<Env>;
