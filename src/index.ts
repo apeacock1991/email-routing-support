@@ -1,5 +1,6 @@
 import { SupportCase } from "./support_case";
 import PostalMime from 'postal-mime';
+import { extractLatestReply } from './email_utils';
 
 export { SupportCase };
 
@@ -12,9 +13,25 @@ export type SerializableEmailMessage = {
 }
 
 export default {
-  // Defined just to avoid random errors in logs - not used as part of the email worker
+  // This acts as the API endpoint for the frontend
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    return new Response("Hello World");
+    const caseId = new URL(request.url).searchParams.get('caseId');
+
+    if (!caseId) {
+      return new Response("Case ID is missing", {status: 400});
+    }
+
+    // Get the DurableObject id and instance
+    const id = env.SUPPORT_CASE.idFromName(caseId);
+    const supportCase = env.SUPPORT_CASE.get(id);
+
+    // We only want to handle clients that want to establish a websocket connection
+    if (request.headers.get("Upgrade") != "websocket") {
+      return new Response("expected websocket", {status: 400});
+    }
+
+    // Call the durable object to establish the websocket connection
+    return supportCase.fetch(request.clone());
   },
   async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
     // Avoid handling larger emails
@@ -36,6 +53,9 @@ export default {
 
     // Parse the email contents, as messsage.row contains a ton of other stuff
     const email = await PostalMime.parse(message.raw);
+    
+    // Clean the email text to get only the latest reply
+    const cleanedText = extractLatestReply(email.text || "");
 
     // We can't pass a ForwardableEmailMessage to a DurableObject, as it's not serializable, so create a serializable version
     const serializableMessage: SerializableEmailMessage = {
@@ -43,7 +63,7 @@ export default {
       to: message.to,
       messageId: message.headers.get("Message-ID"),
       subject: email.subject || "",
-      raw: email.text || ""
+      raw: cleanedText  // Use the cleaned text instead of the full raw text
     };
 
     // If the email is addressed to support, we need to create a new case id else the addressees is the case id

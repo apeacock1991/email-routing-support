@@ -38,5 +38,8 @@
         }
       }
     ]
+  },
+  "assets": {
+    "directory": "./public/"
   }
 }

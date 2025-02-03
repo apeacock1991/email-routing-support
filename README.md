@@ -31,9 +31,12 @@ Even though you can reply to emails using an Email Worker, Cloudflare only allow
 Required environment variables:
 
 - `MAILGUN_DOMAIN`: Your Mailgun sending domain
-- `APP_DOMAIN`: Your application's domain
+- `EMAIL_DOMAIN`: The email domain you want to use to show visibily in the support case
+- `APP_DOMAIN`: The domain to use in the link to the support case
 
 Information on how to set them can be found [here](https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables). These are omitted from the repo so my domains aren't committed to the repo.
+
+Because it's a demo, the domains are a bit all over the place!
 
 Required secrets:
 

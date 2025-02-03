@@ -2,6 +2,8 @@ import { DurableObject } from "cloudflare:workers";
 import { SerializableEmailMessage } from "./index";
 
 export class SupportCase extends DurableObject<Env> {
+  private sql: any;
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
@@ -15,7 +17,7 @@ export class SupportCase extends DurableObject<Env> {
   }
 
   async handleMessage(message: SerializableEmailMessage, caseId: string) {
-    const msgBody = await this.generateReply(message);
+    const msgBody = await this.generateReply(message.raw);
 
     // Store the conversation history so it can be used in future messages
     this.sql.exec(`INSERT INTO support_history (message, role) VALUES (?, 'user');`, [message.raw]);
@@ -24,7 +26,51 @@ export class SupportCase extends DurableObject<Env> {
     await this.sendReply(message, msgBody, caseId);
   }
 
-  private async generateReply(message: SerializableEmailMessage) {
+  // This will be called wehn the API wants to establish a websocket connection
+  async fetch(request: Request) {
+    // Create a websocket pair and accept the connection on the server side
+    let [client, server] = Object.values(new WebSocketPair());
+    this.ctx.acceptWebSocket(server);
+
+    // Query the support history table and send each message to the client
+    let cursor = this.sql.exec("SELECT message, role FROM support_history ORDER BY id ASC;");
+    let rows = cursor.toArray();
+    
+    for (const row of rows) {
+      server.send(JSON.stringify({
+        message: row.message,
+        role: row.role
+      }));
+    }
+
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  // This will be called when the websocket receives a message
+  async webSocketMessage(ws: WebSocket, message: string) {
+    const data = JSON.parse(message) as any;
+    const msgBody = await this.generateReply(data.text);
+
+    this.sql.exec(`INSERT INTO support_history (message, role) VALUES (?, 'user');`, [data.text]);
+    this.sql.exec(`INSERT INTO support_history (message, role) VALUES (?, 'assistant');`, [msgBody]);
+
+    ws.send(JSON.stringify({
+      message: msgBody,
+      role: 'assistant'
+    }));
+  }
+
+  // This will be called when the websocket is closed
+  async webSocketClose(
+    ws: WebSocket,
+    code: number,
+    reason: string,
+    wasClean: boolean
+  ) {
+    ws.close(code, "Durable Object is closing WebSocket");
+  }
+  
+  private async generateReply(message_text: string) {
     // Get the conversation history
     let cursor = this.sql.exec("SELECT message, role FROM support_history ORDER BY id ASC;");
     let rows = cursor.toArray();
@@ -45,7 +91,7 @@ export class SupportCase extends DurableObject<Env> {
       messages.push({ role: row.role, content: row.message });
     }
 
-    messages.push({ role: "user", content: "User message: " + message.raw });
+    messages.push({ role: "user", content: "User message: " + message_text });
 
     // Using Workers AI, call an LLM to generate a reply
     const answer = await this.env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
@@ -55,11 +101,10 @@ export class SupportCase extends DurableObject<Env> {
     return answer.response;
   }
 
-
   private async sendReply(message: SerializableEmailMessage, emailMessage: string, caseId: string) {
     // Construct the reply address, using the primary app domain (e.g. mydomain.com)
     // You can set them in the env within Wrangler, they are omitted from the repo
-    const replyAddress = `${caseId}@${this.env.APP_DOMAIN}`;
+    const replyAddress = `${caseId}@${this.env.EMAIL_DOMAIN}`;
     // Construct the mailgun URL, using the mailgun domain (e.g. I used mg.mydomain.com)
     const mailgunUrl = `https://api.mailgun.net/v3/${this.env.MAILGUN_DOMAIN}/messages`;
 
@@ -71,7 +116,7 @@ export class SupportCase extends DurableObject<Env> {
     formData.append('subject',
       `Re: ${message.subject}`
     );
-    formData.append('text', emailMessage);
+    formData.append('html', `<html><body><p>${emailMessage}</p><p>You can reply to this email to continue the conversation, or <a href="${this.env.APP_DOMAIN}?caseId=${caseId}">click here</a> to continue the conversation in the web interface.</p></body></html>`);
 
     // Email the reply to the user
     const response = await fetch(mailgunUrl, {
