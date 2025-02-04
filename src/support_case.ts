@@ -16,7 +16,7 @@ export class SupportCase extends DurableObject<Env> {
     );`);
   }
 
-  async handleMessage(message: SerializableEmailMessage, caseId: string) {
+  async handleEmailMessage(message: SerializableEmailMessage, caseId: string) {
     const msgBody = await this.generateReply(message.raw);
 
     // Store the conversation history so it can be used in future messages

@@ -76,6 +76,6 @@ export default {
     let supportCase = env.SUPPORT_CASE.get(id);
 
     // Call the durable object to handle the message, this is an RPC call
-    await supportCase.handleMessage(serializableMessage, caseId);
+    await supportCase.handleEmailMessage(serializableMessage, caseId);
   },
 } satisfies ExportedHandler<Env>;
