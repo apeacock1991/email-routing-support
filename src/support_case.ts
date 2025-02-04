@@ -28,9 +28,12 @@ export class SupportCase extends DurableObject<Env> {
 
   // This will be called wehn the API wants to establish a websocket connection
   async fetch(request: Request) {
+    const searchParams = new URL(request.url).searchParams;
+    const role = searchParams.get('role') || "user";
+
     // Create a websocket pair and accept the connection on the server side
     let [client, server] = Object.values(new WebSocketPair());
-    this.ctx.acceptWebSocket(server);
+    this.ctx.acceptWebSocket(server, [role]);
 
     // Query the support history table and send each message to the client
     let cursor = this.sql.exec("SELECT message, role FROM support_history ORDER BY id ASC;");
@@ -49,15 +52,14 @@ export class SupportCase extends DurableObject<Env> {
   // This will be called when the websocket receives a message
   async webSocketMessage(ws: WebSocket, message: string) {
     const data = JSON.parse(message) as any;
-    const msgBody = await this.generateReply(data.text);
 
-    this.sql.exec(`INSERT INTO support_history (message, role) VALUES (?, 'user');`, [data.text]);
-    this.sql.exec(`INSERT INTO support_history (message, role) VALUES (?, 'assistant');`, [msgBody]);
-
-    ws.send(JSON.stringify({
-      message: msgBody,
-      role: 'assistant'
-    }));
+    // If there is an admin connected, simply broadcast the message to all clients as it's two humans talking
+    // If no admin is connected, we prompt the AI to respond
+    if (this.ctx.getWebSockets('admin').length === 0) {
+      await this.handleAiChatMessage(ws, data.text);
+    } else {
+      await this.sendMessageToAllClients(data.text, data.role);
+    }
   }
 
   // This will be called when the websocket is closed
@@ -68,6 +70,42 @@ export class SupportCase extends DurableObject<Env> {
     wasClean: boolean
   ) {
     ws.close(code, "Durable Object is closing WebSocket");
+  }
+
+  private async sendMessageToAllClients(message: string, role: string) {
+    this.sql.exec(`INSERT INTO support_history (message, role) VALUES (?, ?)`, message, role);
+
+    const websockets = this.ctx.getWebSockets()
+
+    for(let x = 0; x < websockets.length; x++) {
+      const session = websockets[x];
+
+      session.send(
+        JSON.stringify({
+          message: message,
+          role: role
+        })
+      );
+    }
+  }
+
+  private async handleAiChatMessage(ws: WebSocket, user_message: string) {
+    // This is incredibly wasteful, as we can just render the message on the client side,
+    // but cheating for speed to handle both flows
+    ws.send(JSON.stringify({
+      message: user_message,
+      role: 'user'
+    }));
+
+    const msgBody = await this.generateReply(user_message);
+
+    this.sql.exec(`INSERT INTO support_history (message, role) VALUES (?, 'user');`, [user_message]);
+    this.sql.exec(`INSERT INTO support_history (message, role) VALUES (?, 'assistant');`, [msgBody]);
+
+    ws.send(JSON.stringify({
+      message: msgBody,
+      role: 'assistant'
+    }));
   }
   
   private async generateReply(message_text: string) {

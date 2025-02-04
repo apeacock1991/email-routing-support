@@ -9,10 +9,12 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
         <script>
             $(document).ready(function() {
-                let caseId = new URLSearchParams(document.location.search).get('caseId');
-                let hostname = window.location.host;
+                const searchParams = new URLSearchParams(document.location.search);
+                const caseId = searchParams.get('caseId');
+                const role = searchParams.get('role') || 'user';
+
                 const wss = document.location.protocol === "http:" ? "ws://" : "wss://";
-                let connect_url = wss + hostname + `/api/case?caseId=${caseId}`;
+                let connect_url = wss + window.location.host + `/api/case?caseId=${caseId}&role=${role}`;
 
                 if (!caseId) {
                   return;
@@ -43,6 +45,14 @@
                                 </div>
                             </div>`
                         )
+                    } else if (data.role === 'admin') {
+                        $('#chat-content').append(
+                            `<div class="flex justify-start">
+                                <div class="bg-green-500 text-white rounded-lg p-3 max-w-[70%]">
+                                    <p>${data.message}</p>
+                                </div>
+                            </div>`
+                        )
                     }
                 });
 
@@ -54,22 +64,13 @@
                     ws.send(
                         JSON.stringify(
                             {
-                                text: msg
+                                text: msg,
+                                role: role
                             }
                         )
                     )
 
                     $('#chat-msg-input').val('');
-
-                    $('#chat-content').append(`
-                      <div class="flex justify-end">
-                          <div class="bg-blue-500 text-white rounded-lg p-3 max-w-[70%]">
-                              <p>
-                                  ${msg}
-                              </p>
-                          </div>
-                      </div>
-                      `);
                 })
             });
 
