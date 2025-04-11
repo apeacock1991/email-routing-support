@@ -146,7 +146,7 @@ export class SupportCase extends DurableObject<Env> {
   }
 
   private async retrieveRelevantContext(message_text: string) {
-    const results = await this.env.AI.autorag("autorag-email-agent").search({
+    const results = await this.env.AI.autorag(this.env.AUTO_RAG_NAME).search({
       query: message_text,
     });
 

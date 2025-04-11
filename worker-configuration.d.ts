@@ -8,4 +8,5 @@ interface Env {
   APP_DOMAIN: string;
   AI: AI;
   RATE_LIMITER: any;
+  AUTO_RAG_NAME: string;
 }

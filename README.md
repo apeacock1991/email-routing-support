@@ -5,8 +5,9 @@ This repository implements a simple demo of an AI-powered email support agent us
 ## Features
 
 - Handles incoming support emails using Cloudflare Email Workers
-- Uses Workers AI (Llama 3.1) to generate contextual responses
+- Uses Workers AI (Llama 4 Scout) to generate contextual responses
 - Maintains conversation history using Durable Objects with SQLite storage
+- Uses RAG to retrieve relevant context using [AutoRAG](https://developers.cloudflare.com/autorag/)
 - Rate limits to prevent abuse
 - Sends responses via Mailgun
 
@@ -33,6 +34,7 @@ Required environment variables:
 - `MAILGUN_DOMAIN`: Your Mailgun sending domain
 - `EMAIL_DOMAIN`: The email domain you want to use to show visibily in the support case
 - `APP_DOMAIN`: The domain to use in the link to the support case
+- `AUTO_RAG_NAME`: The name of the AutoRAG to use
 
 Information on how to set them can be found [here](https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables). These are omitted from the repo so my domains aren't committed to the repo.
 
@@ -67,3 +69,4 @@ _Note: you'll need a $5/month Workers Paid account to access Durable Objects._
 - [Workers AI](https://developers.cloudflare.com/workers-ai/)
 - [Durable Objects](https://developers.cloudflare.com/durable-objects/)
 - [Rate Limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)
+- [AutoRAG](https://developers.cloudflare.com/autorag/)
