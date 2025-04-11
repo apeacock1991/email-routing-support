@@ -113,13 +113,19 @@ export class SupportCase extends DurableObject<Env> {
     let cursor = this.sql.exec("SELECT message, role FROM support_history ORDER BY id ASC;");
     let rows = cursor.toArray();
 
+    // Get the relevant context for the message
+    const context = await this.retrieveRelevantContext(message_text);
+
     // Construct the system prompt, add the conversation history and the latest message from the user
     const messages = [
       {
         role: "system",
         content: "You are a helpful support agent whose job is to answer questions about the " +
           "Cloudflare developer platform. You'll be given the conversation history, alongside " +
-          "the latest messsage from the user. You need to respond to the user's message in a " +
+          "the latest messsage from the user. " +
+          "You can use the following context to help you answer the user's question: " +
+          context.join("\n\n") +
+          "You need to respond to the user's message in a " +
           "way that is helpful and informative." +
           "You can ONLY RESPOND to questions about the Cloudflare developer platform, and you MUST reply in plain text."
       },
@@ -132,11 +138,25 @@ export class SupportCase extends DurableObject<Env> {
     messages.push({ role: "user", content: "User message: " + message_text });
 
     // Using Workers AI, call an LLM to generate a reply
-    const answer = await this.env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
+    const answer = await this.env.AI.run('@cf/meta/llama-4-scout-17b-16e-instruct', {
       messages
     });
 
     return answer.response;
+  }
+
+  private async retrieveRelevantContext(message_text: string) {
+    const results = await this.env.AI.autorag("autorag-email-agent").search({
+      query: message_text,
+    });
+
+    // Extract the text field from each element in the data array
+    const contextTexts = results.data.map((item: any) => {
+      // Each item has a content array with text objects
+      return item.content.map((contentItem: any) => contentItem.text);
+    });
+
+    return contextTexts;
   }
 
   private async sendReply(message: SerializableEmailMessage, emailMessage: string, caseId: string) {
